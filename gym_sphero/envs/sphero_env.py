@@ -30,51 +30,21 @@ class SpheroEnv(gym.Env):
         self.observation_space = gym.spaces.Tuple((
             gym.spaces.Box(low=-100, high=100, shape=(2,), dtype=int),           # (x, y) pos in cm
             gym.spaces.Box(low=-10, high=10, shape=(2,), dtype=np.float32),      # (x, y) velocity TBD units and range
-            gym.spaces.Box(low=-100, high=100, shape=(SpheroEnv.NUM_COLLISIONS_TO_RECORD, 2), dtype=np.float32)    # (x, y) magnitudes of collisions encoutered
+            gym.spaces.Box(low=-100, high=100, shape=(SpheroEnv.NUM_COLLISIONS_TO_RECORD, 2), dtype=np.float32),    # (x, y) magnitudes of collisions encoutered
+            gym.spaces.Box(low=0, high=100, shape=(1,), dtype=int)               # num collisions
         ))
 
         self.seed()
 
         # Setup sphero
-
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
-
-        self.sphero = spheropy.Sphero()
-
-        # TODO: make use_ble more configurable?
-        self.loop.run_until_complete(
-            self.sphero.connect(
-                search_name='SK',
-                use_ble=True,num_retry_attempts=3
-            )
-        )
-
-        # Set to white
-        self.loop.run_until_complete(self.sphero.set_rgb_led(255, 255, 255))
-
-        self.loop.run_until_complete(self._aim_async())
-
-        self.collisions_since_last_action = np.zeros((SpheroEnv.NUM_COLLISIONS_TO_RECORD, 2))
+        self.loop.run_until_complete(self._setup_sphero()) # White
 
     def seed(self, seed=None):
         # Standard impl
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
-
-    async def _aim_async(self):
-        original_color = await self.sphero.get_rgb_led()
-        input('Place the Sphero at (0, 0) in the environment and press enter:')
-        await self.sphero.set_rgb_led()
-        await self.sphero.set_back_led(255)
-        back_pos = int(input('What is the current back light position in degrees?: '))
-        heading_adjustment = ((180 - back_pos) + 360)%360
-        await self.sphero.set_stabilization(False)
-        await self.sphero.set_heading(heading_adjustment)
-        await self.sphero.set_stabilization(True)
-        await self.sphero.configure_locator()
-        await self.sphero.set_back_led(0)
-        await self.sphero.set_rgb_led(*original_color)
 
     def step(self, action):
         return self.loop.run_until_complete(self.step_async(action))
@@ -82,12 +52,9 @@ class SpheroEnv(gym.Env):
     async def step_async(self, action):
         debug_info = {}
         # Get observation
-        obs = await self.sphero.get_locator_info()
-        self.collisions_since_last_action = []
-        # TODO: calculate reward (or fine tune)
-        vel = obs[1]
-        collisions = obs[2]
-        reward = np.linalg.norm(vel, ord=2) - np.linalg.norm(collisions, ord=2)
+        obs = await self._get_obs_async()
+        self._reset_collisions()
+        reward = _calc_reward(obs)
         # TODO: Calculate done
         done = False
 
@@ -96,20 +63,12 @@ class SpheroEnv(gym.Env):
 
         return obs, reward, done, debug_info
 
-    async def _get_obs_async(self):
-        loc_info = await self.sphero.get_locator_info()
-        return (
-            np.array([loc_info.pos_x, loc_info.pos_y], dtype=int),
-            np.array([loc_info.vel_x, loc_info.vel_y], dtype=np.float32),
-            np.array(self.collisions_since_last_action, dtype=np.float32)
-        )
-
     def reset(self):
         return self.loop.run_until_complete(self.reset_async())
 
     async def reset_async(self):
         await self.sphero.roll(0, 0)
-        self.collisions_since_last_action = []
+        self._reset_collisions()
         await self.sphero.set_rgb_led(0, 255, 0)
         return await self._get_obs_async()
 
@@ -117,5 +76,81 @@ class SpheroEnv(gym.Env):
         pass
 
     def close(self):
-        pass
+        self.sphero.disconnect()
+
+    async def _setup_sphero(self):
+        self.sphero = spheropy.Sphero()
+
+        # TODO: make use_ble more configurable?
+        await self.sphero.connect(
+            search_name='SK',
+            use_ble=True,
+            num_retry_attempts=3
+        )
+
+        await self.sphero.set_rgb_led(255, 255, 255) # White
+        await self._aim_async()
+        await self._configure_collisions_async()
+
+    async def _configure_collisions_async(self):
+        self._reset_collisions()
+        def handle_collision(data):
+            nonlocal self
+            if self.num_collisions_since_last_action < SpheroEnv.NUM_COLLISIONS_TO_RECORD:
+                self.collisions_since_last_action[self.num_collisions_since_last_action] = (data.x_magnitude, data.y_magnitude)
+
+            self.num_collisions_since_last_action += 1
+
+            # fire and forget changing color
+            event_loop = asyncio.new_event_loop()
+            event_loop.run_until_complete(self._flash_red_async())
+
+        self.sphero.on_collision.append(handle_collision)
+        await self.sphero.configure_collision_detection(True, 60, 0, 60, 0, 100)
+
+    async def _aim_async(self):
+        original_color = await self.sphero.get_rgb_led()
+        input('Place the Sphero at (0, 0) in the environment and press enter:')
+        await self.sphero.set_rgb_led()
+        await self.sphero.set_back_led(255)
+        back_pos = int(input('What is the current back light position in degrees?: '))
+        # TODO: Consider allowing to manually rotate the Sphero as well.
+        heading_adjustment = ((180 - back_pos) + 360)%360
+        await self.sphero.roll(0, heading_adjustment, spheropy.RollMode.IN_PLACE_ROTATE) # This turns the sphero, but it turns back around
+        await asyncio.sleep(1) # Give the sphero time to rotate
+        await self.sphero.configure_locator()
+        await self.sphero.set_heading(0)
+        await asyncio.sleep(1)
+        await self.sphero.set_back_led(0)
+        await self.sphero.set_rgb_led(*original_color)
+
+    async def _get_obs_async(self):
+        loc_info = await self.sphero.get_locator_info()
+        return (
+            np.array([loc_info.pos_x, loc_info.pos_y], dtype=int),
+            np.array([loc_info.vel_x, loc_info.vel_y], dtype=np.float32),
+            np.array(self.collisions_since_last_action, dtype=np.float32),
+            self.num_collisions_since_last_action
+        )
+
+    def _reset_collisions(self):
+        self.collisions_since_last_action = np.zeros((SpheroEnv.NUM_COLLISIONS_TO_RECORD, 2))
+        self.num_collisions_since_last_action = 0
+
+    async def _flash_red_async(self):
+        await self.sphero.set_rgb_led(255, 0, 0, wait_for_response=False)
+        await asyncio.sleep(0.25)
+        await self.sphero.set_rgb_led(0, 255, 0)
+
+def _calc_reward(obs):
+    vel = obs[1]
+    collisions = obs[2]
+    vel_norm = np.linalg.norm(vel, ord=2)
+
+    # Negative reward if not moving fast enough.
+    # TODO: move to constant.
+    if vel_norm < 2:
+        vel_norm = -1
+
+    return round(vel_norm - np.linalg.norm(collisions, ord=2))
 

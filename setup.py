@@ -2,7 +2,7 @@ from setuptools import setup
 
 __version__ = '0.0.1'
 
-install_requires = ['gym', 'spheropy']
+install_requires = ['gym', 'spheropy>=0.0.3']
 
 setup(
     name='gym_sphero',
