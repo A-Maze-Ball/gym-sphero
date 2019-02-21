@@ -1,4 +1,3 @@
-import math
 import gym
 from gym.utils import seeding
 import asyncio
