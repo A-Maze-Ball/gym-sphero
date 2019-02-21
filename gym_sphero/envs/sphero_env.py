@@ -10,15 +10,17 @@ except ImportError as e:
     raise gym.error.DependencyNotInstalled(f"{e}. (HINT: you can install SpheroPy dependencies with 'pip install spheropy[pygatt]' or pip install spheropy[winble].)")
 
 # Fixed constants
-_MIN_SIGNED_16_BIT_INT = -32,768
-_MAX_SIGNED_16_BIT_INT = 32,767
+_MIN_SIGNED_16_BIT_INT = -32768
+_MAX_SIGNED_16_BIT_INT = 32767
 
 # Globals that can be used for configuration.
 # Alternative would be to have a seperate init function.
 USE_BLE = True
+SPHERO_SEARCH_NAME = 'SK'
 NUM_COLLISIONS_TO_RECORD = 5
+MIN_COLLISION_THRESHOLD = 60
+COLLISION_DEAD_TIME_IN_10MS = 20 # 200 ms
 MIN_VELOCITY_MAGNITUDE = 3
-SPHERO_SEARCH_NAME = 'SK' if USE_BLE else 'Sphero'
 
 class SpheroEnv(gym.Env):
     """
@@ -36,17 +38,23 @@ class SpheroEnv(gym.Env):
             dtype=int
         )
 
-        global NUM_COLLISIONS_TO_RECORD
-        self._num_collisions_to_record = NUM_COLLISIONS_TO_RECORD
-
         global USE_BLE
         self._use_ble = USE_BLE
 
-        global MIN_VELOCITY_MAGNITUDE
-        self._min_velocity_magnitude = MIN_VELOCITY_MAGNITUDE
-
         global SPHERO_SEARCH_NAME
         self._sphero_search_name = SPHERO_SEARCH_NAME
+
+        global NUM_COLLISIONS_TO_RECORD
+        self._num_collisions_to_record = NUM_COLLISIONS_TO_RECORD
+
+        global MIN_COLLISION_THRESHOLD
+        self._min_collision_threshold = MIN_COLLISION_THRESHOLD
+
+        global COLLISION_DEAD_TIME_IN_10MS
+        self._collision_dead_time = COLLISION_DEAD_TIME_IN_10MS
+
+        global MIN_VELOCITY_MAGNITUDE
+        self._min_velocity_magnitude = MIN_VELOCITY_MAGNITUDE
 
         self.observation_space = gym.spaces.Tuple((
             # (x, y) position in cm
@@ -71,7 +79,7 @@ class SpheroEnv(gym.Env):
         self.loop.run_until_complete(self._setup_sphero())
 
     def seed(self, seed=None):
-        # Standard impl
+        # Standard seed impl
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
@@ -96,13 +104,13 @@ class SpheroEnv(gym.Env):
         return self.loop.run_until_complete(self.reset_async())
 
     async def reset_async(self):
-        await self.sphero.roll(0, 0)
+        await self.sphero.roll(0, 0, mode=spheropy.RollMode.IN_PLACE_ROTATE)
         self._reset_collisions()
-        await self.sphero.set_rgb_led(0, 255, 0)
+        await self.sphero.set_rgb_led(0, 255, 0) # Green
         return await self._get_obs_async()
 
     def render(self, mode='human', close=False):
-        # TODO: Implement some render
+        # TODO: Implement some rendering
         pass
 
     def close(self):
@@ -125,16 +133,21 @@ class SpheroEnv(gym.Env):
         self._reset_collisions()
         def handle_collision(data):
             nonlocal self
-            if self.num_collisions_since_last_action < self._num_collisions_to_record:
-                self.collisions_since_last_action[self.num_collisions_since_last_action] = (data.x_magnitude, data.y_magnitude)
-                self.num_collisions_since_last_action += 1
+            if self._num_collisions_since_last_action < self._num_collisions_to_record:
+                self._collisions_since_last_action[self._num_collisions_since_last_action] = (data.x_magnitude, data.y_magnitude)
+                self._num_collisions_since_last_action += 1
 
             # fire and forget changing color
             event_loop = asyncio.new_event_loop()
             event_loop.run_until_complete(self._flash_red_async())
 
         self.sphero.on_collision.append(handle_collision)
-        await self.sphero.configure_collision_detection(True, 60, 0, 60, 0, 20) # 200 ms dead time
+        await self.sphero.configure_collision_detection(
+            True,
+            self._min_collision_threshold, 0,
+            self._min_collision_threshold, 0,
+            self._collision_dead_time
+        )
 
     async def _aim_async(self):
         original_color = await self.sphero.get_rgb_led()
@@ -157,14 +170,14 @@ class SpheroEnv(gym.Env):
         loc_info = await self.sphero.get_locator_info()
         return (
             np.array([loc_info.pos_x, loc_info.pos_y], dtype=int),
-            np.array([loc_info.vel_x, loc_info.vel_y], dtype=np.float32),
-            np.array(self.collisions_since_last_action, dtype=np.float32),
-            self.num_collisions_since_last_action
+            np.array([loc_info.vel_x, loc_info.vel_y], dtype=int),
+            np.array(self._collisions_since_last_action, dtype=int),
+            self._num_collisions_since_last_action
         )
 
     def _reset_collisions(self):
-        self.collisions_since_last_action = np.zeros((self._num_collisions_to_record, 2))
-        self.num_collisions_since_last_action = 0
+        self._collisions_since_last_action = np.zeros((self._num_collisions_to_record, 2))
+        self._num_collisions_since_last_action = 0
 
     async def _flash_red_async(self):
         await self.sphero.set_rgb_led(255, 0, 0, wait_for_response=False)
@@ -177,8 +190,7 @@ class SpheroEnv(gym.Env):
         vel_norm = np.linalg.norm(vel, ord=2)
 
         # Negative reward if not moving fast enough.
-        global MIN_VELOCITY_MAGNITUDE
-        if vel_norm < MIN_VELOCITY_MAGNITUDE:
+        if vel_norm < self._min_velocity_magnitude:
             vel_norm = -1
 
         return round(vel_norm - np.linalg.norm(collisions, ord=2))
