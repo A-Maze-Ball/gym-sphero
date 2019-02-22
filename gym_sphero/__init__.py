@@ -1,5 +1,4 @@
 from gym.envs.registration import register
-from gym_sphero.envs import SpheroEnv
 
 register(
     id='Sphero-v0',

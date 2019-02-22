@@ -1,6 +1,6 @@
 from setuptools import setup, find_packages
 
-__version__ = '0.0.3'
+__version__ = '0.0.4'
 
 install_requires = ['gym', 'numpy', 'spheropy>=0.0.3']
 
