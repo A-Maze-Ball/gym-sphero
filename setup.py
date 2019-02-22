@@ -1,10 +1,10 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
-__version__ = '0.0.2'
+__version__ = '0.0.3'
 
 install_requires = ['gym', 'numpy', 'spheropy>=0.0.3']
 
-packages = ['gym_sphero']
+packages = [package for package in find_packages() if package.startswith('gym_')]
 
 setup(
     name='gym_sphero',
