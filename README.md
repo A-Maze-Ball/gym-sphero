@@ -56,7 +56,7 @@ heading in [0, 359].
 ```
 (
     [x position in cm, y position in cm],
-    [x velocity in cm/sec, y velocity in cm],
+    [x velocity in cm/sec, y velocity in cm/sec],
     [
         [x_1 collision magnitude, y_1 collision magnitude],
         [x_2 collision magnitude, y_2 collision magnitude],
