@@ -1,16 +1,19 @@
+import asyncio
+import threading
 import gym
 from gym.utils import seeding
-import asyncio
 import numpy as np
 
 try:
     import spheropy
 except ImportError as e:
-    raise gym.error.DependencyNotInstalled(f"{e}. (HINT: you can install SpheroPy dependencies with 'pip install spheropy[pygatt]' or pip install spheropy[winble].)")
+    raise gym.error.DependencyNotInstalled(
+        f"{e}. (HINT: you can install SpheroPy dependencies with 'pip install spheropy[pygatt]' or pip install spheropy[winble].)")
 
 # Fixed constants
 _MIN_SIGNED_16_BIT_INT = -32768
 _MAX_SIGNED_16_BIT_INT = 32767
+
 
 class SpheroEnv(gym.Env):
     """
@@ -29,7 +32,7 @@ class SpheroEnv(gym.Env):
 
         self.configure()
         self.seed()
-        self._sphero = None # placeholder
+        self._sphero = None  # placeholder
         self._num_steps = 0
 
         # Create asyncio event loop to run async functions.
@@ -37,16 +40,17 @@ class SpheroEnv(gym.Env):
         asyncio.set_event_loop(self.loop)
 
     def configure(self,
-            use_ble=True,
-            sphero_search_name='SK',
-            max_num_steps_in_episode=200,
-            num_collisions_to_record=3,
-            min_collision_threshold=60,
-            collision_dead_time_in_10ms=20, # 200 ms
-            collision_penalty_multiplier=1.0,
-            min_velocity_magnitude=4,
-            low_velocity_penalty=-1,
-            velocity_reward_multiplier=1.0):
+                  use_ble=True,
+                  sphero_search_name='SK',
+                  level_sphero=True,
+                  max_num_steps_in_episode=200,
+                  num_collisions_to_record=3,
+                  min_collision_threshold=60,
+                  collision_dead_time_in_10ms=20,  # 200 ms
+                  collision_penalty_multiplier=1.0,
+                  min_velocity_magnitude=4,
+                  low_velocity_penalty=-1,
+                  velocity_reward_multiplier=1.0):
         """Configures the environment with the specified values.
 
         Args:
@@ -55,6 +59,11 @@ class SpheroEnv(gym.Env):
             sphero_search_name (str):
                 The partial name to use when
                 searching for the Sphero.
+            level_sphero (bool):
+                If True, the first call to reset will
+                try to level the Sphero as part of its
+                aim routine.
+                If False, levelling will be skipped.
             max_num_steps_in_episode (int):
                 The max number of steps to take in an episode.
             num_collisions_to_record (int):
@@ -85,6 +94,7 @@ class SpheroEnv(gym.Env):
         """
         self._use_ble = use_ble
         self._sphero_search_name = sphero_search_name
+        self._level_sphero = level_sphero
         self._max_num_steps_in_episode = max_num_steps_in_episode
         self._num_collisions_to_record = num_collisions_to_record
         self._min_collision_threshold = min_collision_threshold
@@ -98,16 +108,16 @@ class SpheroEnv(gym.Env):
         self.observation_space = gym.spaces.Tuple((
             # (x, y) position in cm
             gym.spaces.Box(low=_MIN_SIGNED_16_BIT_INT, high=_MAX_SIGNED_16_BIT_INT,
-                shape=(2,), dtype=int),
+                           shape=(2,), dtype=int),
             # (x, y) velocity in cm/sec
             gym.spaces.Box(low=_MIN_SIGNED_16_BIT_INT, high=_MAX_SIGNED_16_BIT_INT,
-                shape=(2,), dtype=int),
+                           shape=(2,), dtype=int),
             # (x, y) magnitudes of collisions encoutered
             gym.spaces.Box(low=_MIN_SIGNED_16_BIT_INT, high=_MAX_SIGNED_16_BIT_INT,
-                shape=(self._num_collisions_to_record, 2), dtype=int),
+                           shape=(self._num_collisions_to_record, 2), dtype=int),
             # num collisions
             gym.spaces.Box(low=0, high=self._num_collisions_to_record,
-                shape=(1,), dtype=int)
+                           shape=(1,), dtype=int)
         ))
 
     def seed(self, seed=None):
@@ -144,9 +154,9 @@ class SpheroEnv(gym.Env):
             await self._setup_sphero()
 
         await self._sphero.roll(0, 0, mode=spheropy.RollMode.IN_PLACE_ROTATE)
-        await asyncio.sleep(1) # give the Sphero time to rotate.
+        await asyncio.sleep(1)  # give the Sphero time to rotate.
         self._reset_collisions()
-        await self._sphero.set_rgb_led(0, 255, 0) # Green
+        await self._sphero.set_rgb_led(0, 255, 0)  # Green
         return await self._get_obs_async()
 
     def render(self, mode='human', close=False):
@@ -166,16 +176,18 @@ class SpheroEnv(gym.Env):
             num_retry_attempts=3
         )
 
-        await self._sphero.set_rgb_led(255, 255, 255) # White
+        await self._sphero.set_rgb_led(255, 255, 255)  # White
         await self._aim_async()
         await self._configure_collisions_async()
 
     async def _configure_collisions_async(self):
         self._reset_collisions()
+
         def handle_collision(data):
             nonlocal self
             if self._num_collisions_since_last_action < self._num_collisions_to_record:
-                self._collisions_since_last_action[self._num_collisions_since_last_action] = (data.x_magnitude, data.y_magnitude)
+                self._collisions_since_last_action[self._num_collisions_since_last_action] = (
+                    data.x_magnitude, data.y_magnitude)
                 self._num_collisions_since_last_action += 1
 
             # fire and forget changing color
@@ -192,19 +204,55 @@ class SpheroEnv(gym.Env):
 
     async def _aim_async(self):
         original_color = await self._sphero.get_rgb_led()
+
         input('Place the Sphero at (0, 0) in the environment and press enter:')
+
         await self._sphero.set_rgb_led()
         await self._sphero.set_back_led(255)
-        back_pos = int(input('What is the current back light position in degrees?: '))
-        # TODO: Consider allowing to manually rotate the Sphero as well.
-        # Would probably need to turn stabilization on and then off again.
-        heading_adjustment = ((180 - back_pos) + 360)%360
-        await self._sphero.roll(0, heading_adjustment, spheropy.RollMode.IN_PLACE_ROTATE)
-        await asyncio.sleep(1) # Give the Sphero time to rotate
+        await self._sphero.set_stabilization(False)
+
+        input('Rotate the Sphero until the back light is at the back and press enter:')
+
+        await self._sphero.set_heading(0)
+        await self._sphero.set_stabilization(True)
+
         await self._sphero.configure_locator()
         await self._sphero.set_heading(0)
         await asyncio.sleep(1)
         await self._sphero.set_back_led(0)
+
+        if self._level_sphero:
+            level_complete_event = threading.Event()
+            level_timeout_in_seconds = 6
+
+            def handle_level_complete(result):
+                nonlocal level_complete_event
+                level_complete_event.set()
+
+            self._sphero.on_self_level_complete.append(handle_level_complete)
+
+            print("Please hold the Sphero in place while leveling in...")
+            print("5")
+            await asyncio.sleep(1)
+            print("4")
+            await asyncio.sleep(1)
+            print("3")
+            await asyncio.sleep(1)
+            print("2")
+            await asyncio.sleep(1)
+            print("1")
+            await asyncio.sleep(1)
+
+            await self._sphero.self_level(timeout=level_timeout_in_seconds)
+
+            level_complete_event.wait(level_timeout_in_seconds)
+            level_complete_event.clear()
+
+            await self._sphero.set_rgb_led(*original_color)
+            input("Leveling complete. You can let go of the Sphero now and press enter:")
+
+        await asyncio.sleep(1)
+
         await self._sphero.set_rgb_led(*original_color)
 
     async def _get_obs_async(self):
@@ -217,13 +265,15 @@ class SpheroEnv(gym.Env):
         )
 
     def _reset_collisions(self):
-        self._collisions_since_last_action = np.zeros((self._num_collisions_to_record, 2))
+        self._collisions_since_last_action = np.zeros(
+            (self._num_collisions_to_record, 2))
         self._num_collisions_since_last_action = 0
 
     async def _flash_red_async(self):
-        await self._sphero.set_rgb_led(255, 0, 0, wait_for_response=False) # Red
+        # Red
+        await self._sphero.set_rgb_led(255, 0, 0, wait_for_response=False)
         await asyncio.sleep(0.25)
-        await self._sphero.set_rgb_led(0, 255, 0) # Green
+        await self._sphero.set_rgb_led(0, 255, 0)  # Green
 
     def _calc_reward(self, obs):
         vel = obs[1]
@@ -238,6 +288,6 @@ class SpheroEnv(gym.Env):
             vel_reward = vel_norm*self._velocity_reward_multiplier
 
         # Scaled penalty based on combined collision magnitudes.
-        collision_penalty = sum([np.linalg.norm(collision, ord=2) for collision in collisions])*self._collsion_penalty_multiplier
+        collision_penalty = sum([np.linalg.norm(collision, ord=2)
+                                 for collision in collisions])*self._collsion_penalty_multiplier
         return round(vel_reward - collision_penalty)
-
