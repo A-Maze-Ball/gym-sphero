@@ -114,6 +114,9 @@ print(f'Total Reward: {total_reward}')
     - Should BLE be used to connect to the Sphero.
 - `sphero_search_name = 'SK'`
     - The partial name to use when searching for the Sphero.
+- `level_sphero = True`
+    - If True, `reset` will attempt to level the Sphero as part of its aim routine.
+    - If False, leveling will be skipped.
 - `max_num_steps_in_episode = 200`
     - The max number of steps to take in an episode.
 - `num_collisions_to_record = 3`

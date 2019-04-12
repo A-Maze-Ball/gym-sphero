@@ -11,7 +11,7 @@ def main():
 
     total_reward = 0
 
-    action = [20, 0]
+    action = [40, 0]
     done = False
     while not done:
         obs, reward, done, _ = env.step(action)
