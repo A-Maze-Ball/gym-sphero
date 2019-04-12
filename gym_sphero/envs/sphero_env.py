@@ -63,7 +63,7 @@ class SpheroEnv(gym.Env):
                 If True, the first call to reset will
                 try to level the Sphero as part of its
                 aim routine.
-                If False, levelling will be skipped.
+                If False, leveling will be skipped.
             max_num_steps_in_episode (int):
                 The max number of steps to take in an episode.
             num_collisions_to_record (int):
