@@ -2,11 +2,13 @@ import gym
 import gym_sphero
 
 # TODO: Replace prints with env.render when we implement it.
+# TODO: Split this into multiple tests.
 
 def main():
     env = gym.make('Sphero-v0')
-    env.configure(max_num_steps_in_episode=40, stop_episode_at_collision=True, center_sphero_every_reset=True)
+    env.configure(max_num_steps_in_episode=40)
 
+    # Run 2 episodes
     for _ in range(2):
         state_t = env.reset()
         print(f'Initial State: {state_t}')

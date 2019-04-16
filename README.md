@@ -147,4 +147,4 @@ Along with the usual `step` and `reset` functions, we also provide the async equ
 - Green: Ready to run or running episodes
 - Red (flash): Collision detected.
 - White: Running aim procedure. During aim procedure Sphero will turn of LED on and off.
-- Light Blue: End of episode and environment needs to be reset.
+- Blue: End of episode and environment needs to be reset.

@@ -13,7 +13,11 @@ except ImportError as e:
 # Fixed constants
 _MIN_SIGNED_16_BIT_INT = -32768
 _MAX_SIGNED_16_BIT_INT = 32767
-
+# Colors in [red, green, blue]
+_COLLISION_COLOR = [255, 0, 0]  # Red
+_AIM_COLOR = [255, 255, 255]    # White
+_DONE_COLOR = [0, 134, 183]     # Blue
+_READY_COLOR = [0, 255, 0]      # Green
 
 class SpheroEnv(gym.Env):
     """
@@ -34,7 +38,7 @@ class SpheroEnv(gym.Env):
         self.seed()
         self._sphero = None  # placeholder
         self._num_steps = 0
-        self._flash_return_color = [66, 235, 244]  # light blue
+        self._flash_return_color = None # placeholder
 
         # Create asyncio event loop to run async functions.
         self.loop = asyncio.new_event_loop()
@@ -147,7 +151,7 @@ class SpheroEnv(gym.Env):
             self._stop_episode_at_collision and obs_t[-1] > 0))
         debug_info = {}
         if done_t:
-            await self._set_color(66, 235, 244)  # light blue
+            await self._set_color(*_DONE_COLOR)  # light blue
         else:
             # take action
             await self._sphero.roll(action[0], action[1])
@@ -168,7 +172,7 @@ class SpheroEnv(gym.Env):
         await self._sphero.roll(0, 0, mode=spheropy.RollMode.IN_PLACE_ROTATE)
         await asyncio.sleep(1)  # give the Sphero time to rotate.
         self._reset_collisions()
-        await self._set_color(0, 255, 0)  # Green
+        await self._set_color(*_READY_COLOR)
         return await self._get_obs_async()
 
     def render(self, mode='human', close=False):
@@ -203,7 +207,7 @@ class SpheroEnv(gym.Env):
 
             # fire and forget changing color
             event_loop = asyncio.new_event_loop()
-            event_loop.run_until_complete(self._flash_red_async())
+            event_loop.run_until_complete(self._flash_collision_color_async())
 
         self._sphero.on_collision.append(handle_collision)
         await self._sphero.configure_collision_detection(
@@ -214,7 +218,7 @@ class SpheroEnv(gym.Env):
         )
 
     async def _aim_async(self):
-        await self._set_color(255, 255, 255)  # White
+        await self._set_color(*_AIM_COLOR)  # White
 
         input('Place the Sphero at (0, 0) in the environment and press enter:')
 
@@ -231,7 +235,7 @@ class SpheroEnv(gym.Env):
         await self._sphero.set_heading(0)
         await asyncio.sleep(1)
         await self._sphero.set_back_led(0)
-        await self._set_color(255, 255, 255)
+        await self._set_color(*_AIM_COLOR)
 
         if self._level_sphero:
             await self._set_color()
@@ -261,7 +265,7 @@ class SpheroEnv(gym.Env):
             level_complete_event.wait(level_timeout_in_seconds)
             level_complete_event.clear()
 
-            await self._set_color(255, 255, 255)
+            await self._set_color(*_AIM_COLOR)
             input("Leveling complete. You can let go of the Sphero now and press enter:")
 
         await asyncio.sleep(1)
@@ -280,10 +284,9 @@ class SpheroEnv(gym.Env):
             (self._num_collisions_to_record, 2))
         self._num_collisions_since_last_action = 0
 
-    # TODO: might need to revisit flash red logic with new color scheme setup.
-    async def _flash_red_async(self):
+    async def _flash_collision_color_async(self):
         # Red
-        await self._sphero.set_rgb_led(255, 0, 0, wait_for_response=False)
+        await self._sphero.set_rgb_led(*_COLLISION_COLOR, wait_for_response=False)
         await asyncio.sleep(0.25)
         await self._sphero.set_rgb_led(*self._flash_return_color, wait_for_response=False)
 
