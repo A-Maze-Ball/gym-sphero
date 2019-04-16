@@ -143,6 +143,9 @@ print(f'Total Reward: {total_reward}')
 ## Async Methods
 Along with the usual `step` and `reset` functions, we also provide the async equivalents, `step_async` and `reset_async`.
 
+## Additional Methods
+There are also `stop` and `stop_async` which can be useful for stoping the Sphero at the end of an episode.
+
 ## Color Codes
 - Green: Ready to run or running episodes
 - Red (flash): Collision detected.
