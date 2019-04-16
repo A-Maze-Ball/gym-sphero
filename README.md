@@ -114,11 +114,17 @@ print(f'Total Reward: {total_reward}')
     - Should BLE be used to connect to the Sphero.
 - `sphero_search_name = 'SK'`
     - The partial name to use when searching for the Sphero.
-- `level_sphero = True`
+- `level_sphero = False`
     - If True, `reset` will attempt to level the Sphero as part of its aim routine.
     - If False, leveling will be skipped.
+- `center_sphero_every_reset = False`:
+    - If True, every call to reset will walk through the aim routine.
+    - If False, only the first reset will walk through the aim routine.
 - `max_num_steps_in_episode = 200`
     - The max number of steps to take in an episode.
+- `stop_episode_at_collision = False`
+    - If True, stops the episode after the first collision.
+    - If False, episode will continue after collision.
 - `num_collisions_to_record = 3`
     - Number of collisions to include in the observation returned from step.
 - `min_collision_threshold = 60`
@@ -136,3 +142,9 @@ print(f'Total Reward: {total_reward}')
 
 ## Async Methods
 Along with the usual `step` and `reset` functions, we also provide the async equivalents, `step_async` and `reset_async`.
+
+## Color Codes
+- Green: Ready to run or running episodes
+- Red (flash): Collision detected.
+- White: Running aim procedure. During aim procedure Sphero will turn of LED on and off.
+- Blue: End of episode and environment needs to be reset.

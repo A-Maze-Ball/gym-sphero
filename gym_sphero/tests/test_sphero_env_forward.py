@@ -2,25 +2,32 @@ import gym
 import gym_sphero
 
 # TODO: Replace prints with env.render when we implement it.
+# TODO: Split this into multiple tests.
 
 def main():
     env = gym.make('Sphero-v0')
-    env.configure(max_num_steps_in_episode=20)
-    obs = env.reset()
-    print(f'Initial Obs: {obs}')
+    env.configure(max_num_steps_in_episode=40)
 
-    total_reward = 0
+    # Run 2 episodes
+    for _ in range(2):
+        state_t = env.reset()
+        print(f'Initial State: {state_t}')
+        total_reward = 0
+        action_t = [40, 0]
+        done_t = False
+        step_t = 0
+        while not done_t:
+            state_t, reward_t, done_t, _ = env.step(action_t)
+            total_reward += reward_t
+            print(f'Action: {action_t}')
+            print(f'Previous observertion: {state_t}')
+            step_t += 1
 
-    action = [40, 0]
-    done = False
-    while not done:
-        obs, reward, done, _ = env.step(action)
-        total_reward += reward
-        print(f'Action: {action}')
-        print(f'Previous observertion: {obs}')
+        print(f'Total number of steps: {step_t}')
+        print(f'Total Reward: {total_reward}')
 
     env.close()
-    print(f'Total Reward: {total_reward}')
+
 
 if __name__ == '__main__':
     main()
