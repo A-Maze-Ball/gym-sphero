@@ -23,6 +23,7 @@ def main():
             print(f'Previous observertion: {state_t}')
             step_t += 1
 
+        env.stop()
         print(f'Total number of steps: {step_t}')
         print(f'Total Reward: {total_reward}')
 
