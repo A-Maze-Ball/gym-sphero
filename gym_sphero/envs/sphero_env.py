@@ -329,7 +329,7 @@ class SpheroEnv(gym.Env):
         collisions = obs[2]
         vel_norm = np.linalg.norm(vel, ord=2)
 
-        if (loc[0] > self._location_threshold or loc[1] > self._location_threshold):
+        if (abs(loc[0]) > self._location_threshold or abs(loc[1]) > self._location_threshold):
             location_penalty = self._location_penalty
             self.location_misaglined = True
         
