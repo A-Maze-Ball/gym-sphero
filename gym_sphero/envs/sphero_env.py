@@ -120,8 +120,8 @@ class SpheroEnv(gym.Env):
         self._collision_dead_time_in_10ms = collision_dead_time_in_10ms
         self._collsion_penalty_multiplier = collision_penalty_multiplier
         self._min_velocity_magnitude = min_velocity_magnitude
-        self._location_threshold=location_threshold,
-        self.location_penalty=location_penalty,
+        self._location_threshold=location_threshold
+        self.location_penalty=location_penalty
         self._low_velocity_penalty = low_velocity_penalty
         self._velocity_reward_multiplier = velocity_reward_multiplier
 
