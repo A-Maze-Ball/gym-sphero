@@ -107,8 +107,8 @@ class SpheroEnv(gym.Env):
                 Multiplier to scale the reward
                 received from velocity.
                 Should be >= 0.
-        """
-        self.location_misaglined = False
+        """        
+        self._location_misaglined = False        
         self._use_ble = use_ble
         self._sphero_search_name = sphero_search_name
         self._level_sphero = level_sphero
@@ -156,7 +156,7 @@ class SpheroEnv(gym.Env):
         self._reset_collisions()
         reward_t = self._calc_reward(obs_t)
         self._done = ((self._num_steps + 1 >= self._max_num_steps_in_episode) or (
-            self._stop_episode_at_collision and obs_t[-1] > 0) or location_misaglined)
+            self._stop_episode_at_collision and obs_t[-1] > 0) or self._location_misaglined)
         debug_info = {}
         if self._done:
             await self._set_color(*_DONE_COLOR)
