@@ -99,6 +99,11 @@ class SpheroEnv(gym.Env):
             min_velocity_magnitude (int):
                 Minimum velocity that needs to be achieved
                 to not incure a penalty.
+            location_threshold (int):
+                The position from (0, 0) at which location_penalty is given
+                and the episode is ended.
+            location_penalty (float):
+                The penalty given when location_threshold is exceeded.
             low_velocity_penalty (int):
                 The penalty to receive when
                 min_velocity_magnitude is not achieved.
@@ -108,7 +113,10 @@ class SpheroEnv(gym.Env):
                 received from velocity.
                 Should be >= 0.
         """        
+        # Runtime Variables
         self._location_misaglined = False        
+
+        # Configured Variables
         self._use_ble = use_ble
         self._sphero_search_name = sphero_search_name
         self._level_sphero = level_sphero
