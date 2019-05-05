@@ -40,6 +40,7 @@ class SpheroEnv(gym.Env):
         self._num_steps = 0
         self._done = False
         self._flash_return_color = None # placeholder
+        self._location_misaglined = False
 
         # Create asyncio event loop to run async functions.
         self.loop = asyncio.new_event_loop()
@@ -57,10 +58,11 @@ class SpheroEnv(gym.Env):
                   collision_dead_time_in_10ms=20,  # 200 ms
                   collision_penalty_multiplier=1.0,
                   min_velocity_magnitude=4,
+                  location_threshold=30, # 30 cm
+                  location_penalty=-10,
                   low_velocity_penalty=-1,
                   velocity_reward_multiplier=1.0):
         """Configures the environment with the specified values.
-
         Args:
             use_ble (bool):
                 Should BLE be used to connect to the Sphero.
@@ -97,6 +99,11 @@ class SpheroEnv(gym.Env):
             min_velocity_magnitude (int):
                 Minimum velocity that needs to be achieved
                 to not incure a penalty.
+            location_threshold (int):
+                The position from (0, 0) at which location_penalty is given
+                and the episode is ended.
+            location_penalty (float):
+                The penalty given when location_threshold is exceeded.
             low_velocity_penalty (int):
                 The penalty to receive when
                 min_velocity_magnitude is not achieved.
@@ -105,7 +112,7 @@ class SpheroEnv(gym.Env):
                 Multiplier to scale the reward
                 received from velocity.
                 Should be >= 0.
-        """
+        """        
         self._use_ble = use_ble
         self._sphero_search_name = sphero_search_name
         self._level_sphero = level_sphero
@@ -117,6 +124,8 @@ class SpheroEnv(gym.Env):
         self._collision_dead_time_in_10ms = collision_dead_time_in_10ms
         self._collsion_penalty_multiplier = collision_penalty_multiplier
         self._min_velocity_magnitude = min_velocity_magnitude
+        self._location_threshold = location_threshold
+        self._location_penalty = location_penalty
         self._low_velocity_penalty = low_velocity_penalty
         self._velocity_reward_multiplier = velocity_reward_multiplier
 
@@ -151,7 +160,7 @@ class SpheroEnv(gym.Env):
         self._reset_collisions()
         reward_t = self._calc_reward(obs_t)
         self._done = ((self._num_steps + 1 >= self._max_num_steps_in_episode) or (
-            self._stop_episode_at_collision and obs_t[-1] > 0))
+            self._stop_episode_at_collision and obs_t[-1] > 0) or self._location_misaglined)
         debug_info = {}
         if self._done:
             await self._set_color(*_DONE_COLOR)
@@ -311,9 +320,14 @@ class SpheroEnv(gym.Env):
         await self._sphero.set_rgb_led(r, g, b)
 
     def _calc_reward(self, obs):
+        loc = obs[0]
         vel = obs[1]
         collisions = obs[2]
         vel_norm = np.linalg.norm(vel, ord=2)
+
+        self.location_misaligned = (abs(loc[0]) > self._location_threshold or 
+                                    abs(loc[1]) > self._location_threshold)
+        location_penalty = self._location_penalty if self.location_misaligned else 0
 
         if vel_norm < self._min_velocity_magnitude:
             # Negative reward if not moving fast enough.
@@ -325,4 +339,4 @@ class SpheroEnv(gym.Env):
         # Scaled penalty based on combined collision magnitudes.
         collision_penalty = sum([np.linalg.norm(collision, ord=2)
                                  for collision in collisions])*self._collsion_penalty_multiplier
-        return round(vel_reward - collision_penalty)
+        return round(vel_reward - collision_penalty + location_penalty)
