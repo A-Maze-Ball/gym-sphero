@@ -40,6 +40,7 @@ class SpheroEnv(gym.Env):
         self._num_steps = 0
         self._done = False
         self._flash_return_color = None # placeholder
+        self._location_misaglined = False
 
         # Create asyncio event loop to run async functions.
         self.loop = asyncio.new_event_loop()
@@ -113,10 +114,6 @@ class SpheroEnv(gym.Env):
                 received from velocity.
                 Should be >= 0.
         """        
-        # Runtime Variables
-        self._location_misaglined = False        
-
-        # Configured Variables
         self._use_ble = use_ble
         self._sphero_search_name = sphero_search_name
         self._level_sphero = level_sphero
