@@ -328,7 +328,7 @@ class SpheroEnv(gym.Env):
 
         self.location_misaligned = (abs(loc[0]) > self._location_threshold or 
                                     abs(loc[1]) > self._location_threshold)
-        location_penalty = self._location_penalty if self.location_misaligned else 
+        location_penalty = self._location_penalty if self.location_misaligned else 0
 
         if vel_norm < self._min_velocity_magnitude:
             # Negative reward if not moving fast enough.
@@ -340,4 +340,4 @@ class SpheroEnv(gym.Env):
         # Scaled penalty based on combined collision magnitudes.
         collision_penalty = sum([np.linalg.norm(collision, ord=2)
                                  for collision in collisions])*self._collsion_penalty_multiplier
-        return round(vel_reward - collision_penalty - location_penalty)
+        return round(vel_reward - collision_penalty + location_penalty)
