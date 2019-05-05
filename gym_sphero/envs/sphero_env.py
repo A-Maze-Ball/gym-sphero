@@ -125,8 +125,8 @@ class SpheroEnv(gym.Env):
         self._collision_dead_time_in_10ms = collision_dead_time_in_10ms
         self._collsion_penalty_multiplier = collision_penalty_multiplier
         self._min_velocity_magnitude = min_velocity_magnitude
-        self._location_threshold=location_threshold
-        self._location_penalty=location_penalty
+        self._location_threshold = location_threshold
+        self._location_penalty = location_penalty
         self._low_velocity_penalty = low_velocity_penalty
         self._velocity_reward_multiplier = velocity_reward_multiplier
 
@@ -326,10 +326,10 @@ class SpheroEnv(gym.Env):
         collisions = obs[2]
         vel_norm = np.linalg.norm(vel, ord=2)
 
-        if (abs(loc[0]) > self._location_threshold or abs(loc[1]) > self._location_threshold):
-            location_penalty = self._location_penalty
-            self.location_misaglined = True
-        
+        self.location_misaligned = (abs(loc[0]) > self._location_threshold or 
+                                    abs(loc[1]) > self._location_threshold)
+        location_penalty = self._location_penalty if self.location_misaligned else 
+
         if vel_norm < self._min_velocity_magnitude:
             # Negative reward if not moving fast enough.
             vel_reward = self._low_velocity_penalty
