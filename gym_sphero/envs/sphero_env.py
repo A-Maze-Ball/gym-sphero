@@ -30,7 +30,7 @@ class SpheroEnv(gym.Env):
         # Action is [speed, heading]
         self.action_space = gym.spaces.Box(
             low=np.array([0, 0]),
-            high=np.array([255, 359]),
+            high=np.array([15, 7]),
             dtype=int
         )
 
@@ -166,7 +166,7 @@ class SpheroEnv(gym.Env):
             await self._set_color(*_DONE_COLOR)
         else:
             # take action
-            await self._sphero.roll(action[0], action[1])
+            await self._sphero.roll(2 + action[0] * 10, action[1] * 45)
             self._num_steps += 1
 
         return obs_t, reward_t, self._done, debug_info
