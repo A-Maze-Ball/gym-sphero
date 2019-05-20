@@ -27,6 +27,52 @@ _ARUCO_PARAMS = cv2.aruco.DetectorParameters_create()
 _ARUCO_DICT = cv2.aruco.Dictionary_get(cv2.aruco.DICT_4X4_50)
 
 
+class _CameraFrameProcessThread(threading.Thread):
+    def __init__(self):
+        super().__init__()
+        self.daemon = True
+        self._frame = None
+        self._is_goal_reached = False
+        self._lock = threading.Lock()
+
+        self._cam = cv2.VideoCapture(0)
+        self._cam.set(cv2.CAP_PROP_AUTOFOCUS, 0)  # turn the autofocus off
+        self._cam.set(3, 1280)   # set the Horizontal resolution
+        self._cam.set(4, 720)    # Set the Vertical resolution
+
+    def run(self):
+        while self._cam.isOpened():
+            with self._lock:
+                success, self._frame = self._cam.read()
+                if not success:
+                    raise RuntimeError('Could not get image from camera')
+
+                # TODO: we probably want to grayscale this first.
+                _, ids, _ = cv2.aruco.detectMarkers(
+                    self._frame, _ARUCO_DICT, parameters=_ARUCO_PARAMS)
+
+                if ids is None:
+                    self._is_goal_reached = True
+
+    @property
+    def frame(self):
+        with self._lock:
+            return self._frame
+
+    @property
+    def is_goal_reached(self):
+        with self._lock:
+            return self._is_goal_reached
+
+    def reset(self):
+        with self._lock:
+            self._is_goal_reached = False
+
+    def close(self):
+        self._cam.release()
+        cv2.destroyAllWindows()
+
+
 class SpheroEnv(gym.Env):
     """
     """
@@ -45,8 +91,7 @@ class SpheroEnv(gym.Env):
         self.configure()
         self.seed()
         self._sphero = None  # placeholder
-        self._webcam = None  # placeholder
-        self._frame_t = None
+        self._image_thread = None  # placeholder
         self._collision_occured = False
         self._num_steps = 0
         self._done = False
@@ -129,11 +174,6 @@ class SpheroEnv(gym.Env):
             gym.spaces.Box(low=0, high=1, shape=(1,), dtype=int)
         ))
 
-        self._webcam = cv2.VideoCapture(0)
-        self._webcam.set(cv2.CAP_PROP_AUTOFOCUS, 0)  # turn the autofocus off
-        self._webcam.set(3, 1280)   # set the Horizontal resolution
-        self._webcam.set(4, 720)    # Set the Vertical resolution
-
     def seed(self, seed=None):
         # Standard seed impl
         self.np_random, seed = seeding.np_random(seed)
@@ -148,9 +188,10 @@ class SpheroEnv(gym.Env):
                 "Cannot step when environment is in done state.")
 
         # Must get the frame first
-        self._frame_t = self._get_frame()
-        is_goal_reached = self._is_goal_reached()
-        obs_t = self._get_obs()
+        frame_t = self._image_thread.frame
+
+        is_goal_reached = self._image_thread.is_goal_reached
+        obs_t = self._get_obs(frame_t)
         self._reset_collisions()
         reward_t = self._calc_reward(is_goal_reached)
         is_max_steps_reached = self._num_steps + 1 >= self._max_num_steps_in_episode
@@ -181,7 +222,19 @@ class SpheroEnv(gym.Env):
         await asyncio.sleep(1)  # give the Sphero time to rotate.
         self._reset_collisions()
         await self._set_color(*_READY_COLOR)
-        return self._get_obs()
+
+        if self._image_thread is None:
+            self._image_thread = _CameraFrameProcessThread()
+
+        if not self._image_thread.is_alive():
+            self._image_thread.start()
+            # Wait till we get the first frame.
+            while self._image_thread.frame is None:
+                await asyncio.sleep(1)
+
+        self._image_thread.reset()
+        frame = self._image_thread.frame
+        return self._get_obs(frame)
 
     def stop(self):
         return self.loop.run_until_complete(self.stop_async())
@@ -201,9 +254,8 @@ class SpheroEnv(gym.Env):
 
         self._sphero.disconnect()
         self._sphero = None
-        self._webcam.release()
-        self._webcam = None
         self.loop.close()
+        self._image_thread.close()
 
     async def _setup_sphero(self):
         self._sphero = spheropy.Sphero()
@@ -290,25 +342,12 @@ class SpheroEnv(gym.Env):
 
         await asyncio.sleep(1)
 
-    def _get_obs(self):
-        scaled_frame = cv2.resize(self._frame_t, (100, 100))
+    def _get_obs(self, frame_t):
+        scaled_frame = cv2.resize(frame_t, (100, 100))
         return (
             scaled_frame,
             1 if self._collision_occured else 0
         )
-
-    def _is_goal_reached(self):
-        # TODO: we probably want to grayscale this first.
-        _, ids, _ = cv2.aruco.detectMarkers(
-            self._frame_t, _ARUCO_DICT, parameters=_ARUCO_PARAMS)
-
-        return ids is not None
-
-    def _get_frame(self):
-        webcam_read_success, frame = self._webcam.read()
-        if not webcam_read_success:
-            raise RuntimeError("Unable to read frame")
-        return frame
 
     def _reset_collisions(self):
         self._collision_occured = False

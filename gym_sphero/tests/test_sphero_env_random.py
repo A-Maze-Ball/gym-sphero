@@ -19,5 +19,6 @@ def main():
     env.close()
     print(f'Total Reward: {total_reward}')
 
+
 if __name__ == '__main__':
     main()
