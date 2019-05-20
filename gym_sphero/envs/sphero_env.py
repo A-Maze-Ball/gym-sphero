@@ -218,6 +218,9 @@ class SpheroEnv(gym.Env):
         elif self._center_sphero_every_reset:
             await self._aim_async()
 
+        # TODO: Consider rolling in a random direction to get a new starting position.
+        # if center_sphero_every_reset is false.
+
         await self._sphero.roll(0, 0, mode=spheropy.RollMode.IN_PLACE_ROTATE)
         await asyncio.sleep(1)  # give the Sphero time to rotate.
         self._reset_collisions()
@@ -353,9 +356,10 @@ class SpheroEnv(gym.Env):
         self._collision_occured = False
 
     async def _flash_collision_color_async(self):
-        await self._sphero.set_rgb_led(*_COLLISION_COLOR, wait_for_response=False)
-        await asyncio.sleep(0.25)
-        await self._sphero.set_rgb_led(*self._flash_return_color, wait_for_response=False)
+        if self._sphero is not None:
+            await self._sphero.set_rgb_led(*_COLLISION_COLOR, wait_for_response=False)
+            await asyncio.sleep(0.25)
+            await self._sphero.set_rgb_led(*self._flash_return_color, wait_for_response=False)
 
     async def _set_color(self, r=0, g=0, b=0):
         self._flash_return_color = [r, g, b]
