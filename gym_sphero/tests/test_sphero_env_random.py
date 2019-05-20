@@ -6,17 +6,15 @@ import gym_sphero
 def main():
     env = gym.make('Sphero-v0')
     env.configure(max_num_steps_in_episode=100)
-    obs = env.reset()
-    print(f'Initial Obs: {obs}')
+    state_t = env.reset()
 
     total_reward = 0
-    done = False
-    while not done:
-        action = env.action_space.sample()
-        obs, reward, done, _ = env.step(action)
-        total_reward += reward
-        print(f'Action: {action}')
-        print(f'Previous observertion: {obs}')
+    done_t = False
+    while not done_t:
+        action_t = env.action_space.sample()
+        state_t, reward_t, done_t, _ = env.step(action_t)
+        total_reward += reward_t
+        print(f'Action: {action_t}')
 
     env.close()
     print(f'Total Reward: {total_reward}')

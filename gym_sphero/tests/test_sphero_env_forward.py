@@ -11,7 +11,6 @@ def main():
     # Run 2 episodes
     for _ in range(2):
         state_t = env.reset()
-        print(f'Initial State: {state_t}')
         total_reward = 0
         action_t = [40, 0]
         done_t = False
@@ -20,7 +19,6 @@ def main():
             state_t, reward_t, done_t, _ = env.step(action_t)
             total_reward += reward_t
             print(f'Action: {action_t}')
-            print(f'Previous observertion: {state_t}')
             step_t += 1
 
         env.stop()

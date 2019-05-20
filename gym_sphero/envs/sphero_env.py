@@ -4,6 +4,9 @@ import gym
 from gym.utils import seeding
 import numpy as np
 
+import cv2
+import cv2.aruco
+
 try:
     import spheropy
 except ImportError as e:
@@ -18,6 +21,11 @@ _COLLISION_COLOR = [255, 0, 0]  # Red
 _AIM_COLOR = [255, 255, 255]    # White
 _DONE_COLOR = [0, 134, 183]     # Blue
 _READY_COLOR = [0, 255, 0]      # Green
+
+# Fixed ARUCO settings
+_ARUCO_PARAMS = cv2.aruco.DetectorParameters_create()
+_ARUCO_DICT = cv2.aruco.Dictionary_get(cv2.aruco.DICT_4X4_50)
+
 
 class SpheroEnv(gym.Env):
     """
@@ -37,9 +45,12 @@ class SpheroEnv(gym.Env):
         self.configure()
         self.seed()
         self._sphero = None  # placeholder
+        self._webcam = None  # placeholder
+        self._frame_t = None
+        self._collision_occured = False
         self._num_steps = 0
         self._done = False
-        self._flash_return_color = None # placeholder
+        self._flash_return_color = None  # placeholder
 
         # Create asyncio event loop to run async functions.
         self.loop = asyncio.new_event_loop()
@@ -52,13 +63,11 @@ class SpheroEnv(gym.Env):
                   center_sphero_every_reset=False,
                   max_num_steps_in_episode=200,
                   stop_episode_at_collision=False,
-                  num_collisions_to_record=3,
                   min_collision_threshold=60,
                   collision_dead_time_in_10ms=20,  # 200 ms
-                  collision_penalty_multiplier=1.0,
-                  min_velocity_magnitude=4,
-                  low_velocity_penalty=-1,
-                  velocity_reward_multiplier=1.0):
+                  collision_penalty=-1,
+                  step_penalty=-1,
+                  goal_reward=100):
         """Configures the environment with the specified values.
 
         Args:
@@ -90,21 +99,15 @@ class SpheroEnv(gym.Env):
             collision_dead_time_in_10ms (int):
                 The dead time between recording another collision.
                 In 10 ms increments so 10 is 100 ms.
-            collision_penalty_multiplier (float):
-                Multiplier to scale the negative reward
-                received when there is a collsion.
-                Should be >= 0.
-            min_velocity_magnitude (int):
-                Minimum velocity that needs to be achieved
-                to not incure a penalty.
-            low_velocity_penalty (int):
-                The penalty to receive when
-                min_velocity_magnitude is not achieved.
-                Should be <= 0.
-            velocity_reward_multiplier (float):
-                Multiplier to scale the reward
-                received from velocity.
-                Should be >= 0.
+            collision_penalty (int):
+                The penalty to apply when a collision occures.
+                Should be negative integer in most cases.
+            step_penalty (int):
+                The penalty to apply every step of the environment.
+                Usually non-positive integer in most cases.
+            goal_reward (int):
+                The reward to receive when goal is reached.
+                Usually a positive integer for most cases.
         """
         self._use_ble = use_ble
         self._sphero_search_name = sphero_search_name
@@ -112,29 +115,24 @@ class SpheroEnv(gym.Env):
         self._center_sphero_every_reset = center_sphero_every_reset
         self._max_num_steps_in_episode = max_num_steps_in_episode
         self._stop_episode_at_collision = stop_episode_at_collision
-        self._num_collisions_to_record = num_collisions_to_record
         self._min_collision_threshold = min_collision_threshold
         self._collision_dead_time_in_10ms = collision_dead_time_in_10ms
-        self._collsion_penalty_multiplier = collision_penalty_multiplier
-        self._min_velocity_magnitude = min_velocity_magnitude
-        self._low_velocity_penalty = low_velocity_penalty
-        self._velocity_reward_multiplier = velocity_reward_multiplier
+        self._collision_penalty = collision_penalty
+        self._step_penalty = step_penalty
+        self._goal_reward = goal_reward
 
         # Observation space depends on some dynamic properties.
         self.observation_space = gym.spaces.Tuple((
-            # (x, y) position in cm
-            gym.spaces.Box(low=_MIN_SIGNED_16_BIT_INT, high=_MAX_SIGNED_16_BIT_INT,
-                           shape=(2,), dtype=int),
-            # (x, y) velocity in cm/sec
-            gym.spaces.Box(low=_MIN_SIGNED_16_BIT_INT, high=_MAX_SIGNED_16_BIT_INT,
-                           shape=(2,), dtype=int),
-            # (x, y) magnitudes of collisions encoutered
-            gym.spaces.Box(low=_MIN_SIGNED_16_BIT_INT, high=_MAX_SIGNED_16_BIT_INT,
-                           shape=(self._num_collisions_to_record, 2), dtype=int),
+            # image
+            gym.spaces.Box(low=0, high=255, shape=(100, 100, 3), dtype=int),
             # num collisions
-            gym.spaces.Box(low=0, high=self._num_collisions_to_record,
-                           shape=(1,), dtype=int)
+            gym.spaces.Box(low=0, high=1, shape=(1,), dtype=int)
         ))
+
+        self._webcam = cv2.VideoCapture(0)
+        self._webcam.set(cv2.CAP_PROP_AUTOFOCUS, 0)  # turn the autofocus off
+        self._webcam.set(3, 1280)   # set the Horizontal resolution
+        self._webcam.set(4, 720)    # Set the Vertical resolution
 
     def seed(self, seed=None):
         # Standard seed impl
@@ -146,12 +144,18 @@ class SpheroEnv(gym.Env):
 
     async def step_async(self, action):
         if self._done:
-            raise RuntimeError("Cannot step when environment is in done state.")
-        obs_t = await self._get_obs_async()
+            raise RuntimeError(
+                "Cannot step when environment is in done state.")
+
+        # Must get the frame first
+        self._frame_t = self._get_frame()
+        is_goal_reached = self._is_goal_reached()
+        obs_t = self._get_obs()
         self._reset_collisions()
-        reward_t = self._calc_reward(obs_t)
-        self._done = ((self._num_steps + 1 >= self._max_num_steps_in_episode) or (
-            self._stop_episode_at_collision and obs_t[-1] > 0))
+        reward_t = self._calc_reward(is_goal_reached)
+        is_max_steps_reached = self._num_steps + 1 >= self._max_num_steps_in_episode
+        stop_for_collision = self._stop_episode_at_collision and self._collision_occured
+        self._done = is_goal_reached or is_max_steps_reached or stop_for_collision
         debug_info = {}
         if self._done:
             await self._set_color(*_DONE_COLOR)
@@ -177,7 +181,7 @@ class SpheroEnv(gym.Env):
         await asyncio.sleep(1)  # give the Sphero time to rotate.
         self._reset_collisions()
         await self._set_color(*_READY_COLOR)
-        return await self._get_obs_async()
+        return self._get_obs()
 
     def stop(self):
         return self.loop.run_until_complete(self.stop_async())
@@ -197,6 +201,8 @@ class SpheroEnv(gym.Env):
 
         self._sphero.disconnect()
         self._sphero = None
+        self._webcam.release()
+        self._webcam = None
         self.loop.close()
 
     async def _setup_sphero(self):
@@ -216,10 +222,7 @@ class SpheroEnv(gym.Env):
 
         def handle_collision(data):
             nonlocal self
-            if self._num_collisions_since_last_action < self._num_collisions_to_record:
-                self._collisions_since_last_action[self._num_collisions_since_last_action] = (
-                    data.x_magnitude, data.y_magnitude)
-                self._num_collisions_since_last_action += 1
+            self._collision_occured = True
 
             # fire and forget changing color
             event_loop = asyncio.new_event_loop()
@@ -287,19 +290,28 @@ class SpheroEnv(gym.Env):
 
         await asyncio.sleep(1)
 
-    async def _get_obs_async(self):
-        loc_info = await self._sphero.get_locator_info()
+    def _get_obs(self):
+        scaled_frame = cv2.resize(self._frame_t, (100, 100))
         return (
-            np.array([loc_info.pos_x, loc_info.pos_y], dtype=int),
-            np.array([loc_info.vel_x, loc_info.vel_y], dtype=int),
-            np.array(self._collisions_since_last_action, dtype=int),
-            self._num_collisions_since_last_action
+            scaled_frame,
+            1 if self._collision_occured else 0
         )
 
+    def _is_goal_reached(self):
+        # TODO: we probably want to grayscale this first.
+        _, ids, _ = cv2.aruco.detectMarkers(
+            self._frame_t, _ARUCO_DICT, parameters=_ARUCO_PARAMS)
+
+        return ids is not None
+
+    def _get_frame(self):
+        webcam_read_success, frame = self._webcam.read()
+        if not webcam_read_success:
+            raise RuntimeError("Unable to read frame")
+        return frame
+
     def _reset_collisions(self):
-        self._collisions_since_last_action = np.zeros(
-            (self._num_collisions_to_record, 2))
-        self._num_collisions_since_last_action = 0
+        self._collision_occured = False
 
     async def _flash_collision_color_async(self):
         await self._sphero.set_rgb_led(*_COLLISION_COLOR, wait_for_response=False)
@@ -310,19 +322,8 @@ class SpheroEnv(gym.Env):
         self._flash_return_color = [r, g, b]
         await self._sphero.set_rgb_led(r, g, b)
 
-    def _calc_reward(self, obs):
-        vel = obs[1]
-        collisions = obs[2]
-        vel_norm = np.linalg.norm(vel, ord=2)
-
-        if vel_norm < self._min_velocity_magnitude:
-            # Negative reward if not moving fast enough.
-            vel_reward = self._low_velocity_penalty
-        else:
-            # Scaled reward based on velocity magnitude.
-            vel_reward = vel_norm*self._velocity_reward_multiplier
-
-        # Scaled penalty based on combined collision magnitudes.
-        collision_penalty = sum([np.linalg.norm(collision, ord=2)
-                                 for collision in collisions])*self._collsion_penalty_multiplier
-        return round(vel_reward - collision_penalty)
+    def _calc_reward(self, is_goal_reached):
+        reward = self._goal_reward if is_goal_reached else self._step_penalty
+        if self._collision_occured:
+            reward += self._collision_penalty
+        return reward
