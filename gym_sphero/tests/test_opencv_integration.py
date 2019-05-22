@@ -5,7 +5,7 @@ import numpy as np
 # NOTE: Generate tags using http://chev.me/arucogen/
 
 def main():
-    webcam = cv2.VideoCapture(0)
+    webcam = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     webcam.set(cv2.CAP_PROP_AUTOFOCUS, 0) # turn the autofocus off
     webcam.set(3, 1280) # set the Horizontal resolution
     webcam.set(4, 720) # Set the Vertical resolution

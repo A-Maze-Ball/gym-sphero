@@ -35,7 +35,7 @@ class _CameraFrameProcessThread(threading.Thread):
         self._is_goal_reached = False
         self._lock = threading.Lock()
 
-        self._cam = cv2.VideoCapture(0)
+        self._cam = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         self._cam.set(cv2.CAP_PROP_AUTOFOCUS, 0)  # turn the autofocus off
         self._cam.set(3, 1280)   # set the Horizontal resolution
         self._cam.set(4, 720)    # Set the Vertical resolution
@@ -255,6 +255,8 @@ class SpheroEnv(gym.Env):
         except:
             pass
 
+        pending = asyncio.all_tasks(loop=self.loop)
+        self.loop.run_until_complete(asyncio.gather(*pending))
         self._sphero.disconnect()
         self._sphero = None
         self.loop.close()
