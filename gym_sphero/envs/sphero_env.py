@@ -3,6 +3,7 @@ import threading
 import gym
 from gym.utils import seeding
 import numpy as np
+from readerwriterlock import rwlock
 
 import cv2
 import cv2.aruco
@@ -21,6 +22,7 @@ _COLLISION_COLOR = [255, 0, 0]  # Red
 _AIM_COLOR = [255, 255, 255]    # White
 _DONE_COLOR = [0, 134, 183]     # Blue
 _READY_COLOR = [0, 255, 0]      # Green
+_RESET_COLOR = [255,140,0]      # Dark Orange
 
 # Fixed ARUCO settings
 _ARUCO_PARAMS = cv2.aruco.DetectorParameters_create()
@@ -31,10 +33,15 @@ class _CameraFrameProcessThread(threading.Thread):
     def __init__(self):
         super().__init__()
         self.daemon = True
+
         self._frame = None
         self._is_goal_reached = False
-        self._lock = threading.Lock()
+        self._rw_lock = rwlock.RWLockWrite()
 
+        self._corners = None
+        self._ids = None
+
+        # Camera Settings
         self._cam = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         self._cam.set(cv2.CAP_PROP_AUTOFOCUS, 0)  # turn the autofocus off
         self._cam.set(3, 1280)   # set the Horizontal resolution
@@ -42,31 +49,41 @@ class _CameraFrameProcessThread(threading.Thread):
 
     def run(self):
         while self._cam.isOpened():
-            with self._lock:
+            with self._rw_lock.gen_wlock():
                 success, self._frame = self._cam.read()
                 if not success:
                     raise RuntimeError('Could not get image from camera')
 
-                # TODO: we probably want to grayscale this first.
-                _, ids, _ = cv2.aruco.detectMarkers(
+                self._corners, self._ids, _ = cv2.aruco.detectMarkers(
                     self._frame, _ARUCO_DICT, parameters=_ARUCO_PARAMS)
 
-                if ids is None:
+                if self._ids is None:
                     self._is_goal_reached = True
+
+                # TODO: pre-process the image.
 
     @property
     def frame(self):
-        with self._lock:
+        with self._rw_lock.gen_rlock():
             return self._frame
 
     @property
     def is_goal_reached(self):
-        with self._lock:
+        with self._rw_lock.gen_rlock():
             return self._is_goal_reached
 
     def reset(self):
-        with self._lock:
+        with self._rw_lock.gen_wlock():
             self._is_goal_reached = False
+
+    def render(self):
+        with self._rw_lock.gen_rlock():
+            if self._ids is not None:
+                marker_frame = cv2.aruco.drawDetectedMarkers(
+                    self._frame, self._corners, borderColor=(0, 255, 0))
+
+                cv2.imshow('marker_frame', marker_frame)
+                cv2.waitKey(1)
 
     def close(self):
         self._cam.release()
@@ -97,9 +114,13 @@ class SpheroEnv(gym.Env):
         self._done = False
         self._flash_return_color = None  # placeholder
 
+        # Create asyncio event loop to handle callbacks.
+        self.callback_loop = asyncio.new_event_loop()
+
         # Create asyncio event loop to run async functions.
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
+
 
     def configure(self,
                   use_ble=True,
@@ -217,14 +238,22 @@ class SpheroEnv(gym.Env):
             await self._setup_sphero()
         elif self._center_sphero_every_reset:
             await self._aim_async()
+        else:
+            await self._set_color(*_RESET_COLOR)
+            # take two steps in random directions.
+            random_action = self.action_space.sample()
+            await self._sphero.roll(random_action[0], random_action[1])
+            await asyncio.sleep(0.5)
+            random_action = self.action_space.sample()
+            await self._sphero.roll(random_action[0], random_action[1])
+            await asyncio.sleep(0.5)
+            await self.stop_async()
 
-        # TODO: Consider rolling in a random direction to get a new starting position.
-        # if center_sphero_every_reset is false.
+        await self._set_color(*_RESET_COLOR)
 
         await self._sphero.roll(0, 0, mode=spheropy.RollMode.IN_PLACE_ROTATE)
         await asyncio.sleep(1)  # give the Sphero time to rotate.
         self._reset_collisions()
-        await self._set_color(*_READY_COLOR)
 
         if self._image_thread is None:
             self._image_thread = _CameraFrameProcessThread()
@@ -236,6 +265,7 @@ class SpheroEnv(gym.Env):
                 await asyncio.sleep(1)
 
         self._image_thread.reset()
+        await self._set_color(*_READY_COLOR)
         frame = self._image_thread.frame
         return self._get_obs(frame)
 
@@ -246,8 +276,12 @@ class SpheroEnv(gym.Env):
         await self._sphero.roll(0, 0)
 
     def render(self, mode='human', close=False):
-        # TODO: Implement some rendering
-        pass
+        if mode == 'human':
+            return self._image_thread.render()
+        elif mode == 'rgb_array':
+            return self._image_thread.frame
+        else:
+            super().render(mode=mode)
 
     def close(self):
         try:
@@ -255,11 +289,16 @@ class SpheroEnv(gym.Env):
         except:
             pass
 
+        pending_callbacks = asyncio.all_tasks(loop=self.callback_loop)
+        self.callback_loop.run_until_complete(asyncio.gather(*pending_callbacks, loop=self.callback_loop))
+        self.callback_loop.close()
+
         pending = asyncio.all_tasks(loop=self.loop)
-        self.loop.run_until_complete(asyncio.gather(*pending))
+        self.loop.run_until_complete(asyncio.gather(*pending, loop=self.loop))
+        self.loop.close()
+
         self._sphero.disconnect()
         self._sphero = None
-        self.loop.close()
         self._image_thread.close()
 
     async def _setup_sphero(self):
@@ -282,9 +321,7 @@ class SpheroEnv(gym.Env):
             self._collision_occured = True
 
             # fire and forget changing color
-            event_loop = asyncio.new_event_loop()
-            event_loop.run_until_complete(self._flash_collision_color_async())
-            event_loop.close()
+            self.callback_loop.create_task(self._flash_collision_color_async())
 
         self._sphero.on_collision.append(handle_collision)
         await self._sphero.configure_collision_detection(
