@@ -9,7 +9,7 @@ def main():
     env = gym.make('Sphero-v0')
     env.configure(max_num_steps_in_episode=40)
 
-    action_t = [40, 0]
+    action_t = [2, 0]
 
     for episode in range(NUM_EPISODES):
         state_t = env.reset()
