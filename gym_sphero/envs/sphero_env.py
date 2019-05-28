@@ -123,13 +123,8 @@ class SpheroEnv(gym.Env):
             dtype=int
         )
 
-        # Observation is (image, collision_occured)
-        self.observation_space = gym.spaces.Tuple((
-            # image
-            gym.spaces.Box(low=0, high=255, shape=(64, 64), dtype=int),
-            # was there a collision
-            gym.spaces.Box(low=0, high=1, shape=(1,), dtype=int)
-        ))
+        # Observation is an image
+        self.observation_space = gym.spaces.Box(low=0, high=255, shape=(64, 64), dtype=int)
 
         self.configure()
         self.seed()
@@ -222,22 +217,25 @@ class SpheroEnv(gym.Env):
             raise RuntimeError(
                 "Cannot step when environment is in done state.")
 
-        obs_t = self._get_obs()
-        is_goal_reached = self._image_thread.is_goal_reached
+        # NOTE: There is a chance we may miss a collision
+        # due to a collision occuring after the last step but before this point.
         self._reset_collisions()
-        reward_t = self._calc_reward(is_goal_reached)
+
+        # take action
+        await self._sphero.roll(*self._action_to_sphero_roll(action))
+        self._num_steps += 1
+
+        obs_t1 = self._get_obs()
+        is_goal_reached = self._image_thread.is_goal_reached
+        reward_t1 = self._calc_reward(is_goal_reached)
         is_max_steps_reached = self._num_steps + 1 >= self._max_num_steps_in_episode
         stop_for_collision = self._stop_episode_at_collision and self._collision_occured
         self._done = is_goal_reached or is_max_steps_reached or stop_for_collision
         debug_info = {}
         if self._done:
             await self._set_color(*_DONE_COLOR)
-        else:
-            # take action
-            await self._sphero.roll(*self._action_to_sphero_roll(action))
-            self._num_steps += 1
 
-        return obs_t, reward_t, self._done, debug_info
+        return obs_t1, reward_t1, self._done, debug_info
 
     def reset(self):
         return self.loop.run_until_complete(self.reset_async())
@@ -268,7 +266,7 @@ class SpheroEnv(gym.Env):
 
         if self._image_thread is None:
             self._image_thread = _CameraFrameProcessThread(
-                self.observation_space.spaces[0].shape)
+                self.observation_space.shape)
 
         if not self._image_thread.is_alive():
             self._image_thread.start()
@@ -404,10 +402,7 @@ class SpheroEnv(gym.Env):
         await asyncio.sleep(1)
 
     def _get_obs(self):
-        return (
-            self._image_thread.scaled_frame,
-            1 if self._collision_occured else 0
-        )
+        return self._image_thread.scaled_frame
 
     def _reset_collisions(self):
         self._collision_occured = False
